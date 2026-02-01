@@ -51,7 +51,7 @@ const probeNumber = async (filePath: string, entry: string): Promise<number> => 
 const hasAttachedPicture = async (filePath: string): Promise<boolean> => {
   const { stdout } = await execFileAsync(
     "ffprobe",
-    ["-v", "error", "-show_entries", "stream=disposition", "-of", "json", filePath],
+    ["-v", "error", "-show_streams", "-of", "json", filePath],
     { encoding: "utf8" },
   );
 
@@ -131,24 +131,35 @@ const attachArtwork = async (sourcePath: string, targetPath: string): Promise<vo
   await fs.rename(tempPath, targetPath);
 };
 
-const segmentByTime = async (
-  inputPath: string,
-  outDir: string,
-  seconds: number,
-  tags: Record<string, string>,
-) => {
-  const outputPattern = buildOutputPattern(inputPath, outDir);
+type SegmentArgsOptions = {
+  inputPath: string;
+  outputPattern: string;
+  seconds: number;
+  tags: Record<string, string>;
+};
+
+type SliceArgsOptions = {
+  inputPath: string;
+  outputPath: string;
+  start: number;
+  duration: number;
+  tags: Record<string, string>;
+};
+
+export const buildSegmentArgs = (options: SegmentArgsOptions): string[] => {
   const args = [
     "-y",
     "-i",
-    inputPath,
+    options.inputPath,
+    "-map",
+    "0:a",
   ];
 
-  if (tags.title) {
-    args.push("-metadata", `title=${tags.title}`);
+  if (options.tags.title) {
+    args.push("-metadata", `title=${options.tags.title}`);
   }
-  if (tags.artist) {
-    args.push("-metadata", `artist=${tags.artist}`);
+  if (options.tags.artist) {
+    args.push("-metadata", `artist=${options.tags.artist}`);
   }
 
   args.push(
@@ -161,11 +172,61 @@ const segmentByTime = async (
     "-f",
     "segment",
     "-segment_time",
-    String(seconds),
+    String(options.seconds),
     "-reset_timestamps",
     "1",
-    outputPattern,
+    options.outputPattern,
   );
+
+  return args;
+};
+
+export const buildSliceArgs = (options: SliceArgsOptions): string[] => {
+  const args = [
+    "-y",
+    "-i",
+    options.inputPath,
+    "-map",
+    "0:a",
+  ];
+
+  if (options.tags.title) {
+    args.push("-metadata", `title=${options.tags.title}`);
+  }
+  if (options.tags.artist) {
+    args.push("-metadata", `artist=${options.tags.artist}`);
+  }
+
+  args.push(
+    "-id3v2_version",
+    "3",
+    "-write_id3v1",
+    "1",
+    "-ss",
+    String(options.start),
+    "-t",
+    String(options.duration),
+    "-c:a",
+    "libmp3lame",
+    options.outputPath,
+  );
+
+  return args;
+};
+
+const segmentByTime = async (
+  inputPath: string,
+  outDir: string,
+  seconds: number,
+  tags: Record<string, string>,
+) => {
+  const outputPattern = buildOutputPattern(inputPath, outDir);
+  const args = buildSegmentArgs({
+    inputPath,
+    outputPattern,
+    seconds,
+    tags,
+  });
 
   await run("ffmpeg", args);
 };
@@ -221,30 +282,13 @@ const splitOnSilence = async (
   for (const end of boundaries) {
     const duration = Math.max(0.01, end - start);
     const outputPath = path.join(outDir, `${base}_${zeroPad(index, 5)}.mp3`);
-    const args = [
-      "-y",
-      "-i",
+    const args = buildSliceArgs({
       inputPath,
-    ];
-    if (tags.title) {
-      args.push("-metadata", `title=${tags.title}`);
-    }
-    if (tags.artist) {
-      args.push("-metadata", `artist=${tags.artist}`);
-    }
-    args.push(
-      "-id3v2_version",
-      "3",
-      "-write_id3v1",
-      "1",
-      "-ss",
-      String(start),
-      "-t",
-      String(duration),
-      "-c:a",
-      "libmp3lame",
       outputPath,
-    );
+      start,
+      duration,
+      tags,
+    });
     await run("ffmpeg", args);
     start = end;
     index += 1;
@@ -253,30 +297,13 @@ const splitOnSilence = async (
   const totalDuration = await probeNumber(inputPath, "duration");
   if (totalDuration > start) {
     const outputPath = path.join(outDir, `${base}_${zeroPad(index, 5)}.mp3`);
-    const args = [
-      "-y",
-      "-i",
+    const args = buildSliceArgs({
       inputPath,
-    ];
-    if (tags.title) {
-      args.push("-metadata", `title=${tags.title}`);
-    }
-    if (tags.artist) {
-      args.push("-metadata", `artist=${tags.artist}`);
-    }
-    args.push(
-      "-id3v2_version",
-      "3",
-      "-write_id3v1",
-      "1",
-      "-ss",
-      String(start),
-      "-t",
-      String(totalDuration - start),
-      "-c:a",
-      "libmp3lame",
       outputPath,
-    );
+      start,
+      duration: totalDuration - start,
+      tags,
+    });
     await run("ffmpeg", args);
   }
 };

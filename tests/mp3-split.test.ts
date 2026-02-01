@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { splitMp3 } from "../src/mp3/split.js";
+import { buildSegmentArgs, buildSliceArgs, splitMp3 } from "../src/mp3/split.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -42,7 +42,7 @@ const probeTags = async (filePath: string): Promise<Record<string, string>> => {
 const hasAttachedPicture = async (filePath: string): Promise<boolean> => {
   const { stdout } = await execFileAsync(
     "ffprobe",
-    ["-v", "error", "-show_entries", "stream=disposition", "-of", "json", filePath],
+    ["-v", "error", "-show_streams", "-of", "json", filePath],
     { encoding: "utf8" },
   );
 
@@ -50,9 +50,7 @@ const hasAttachedPicture = async (filePath: string): Promise<boolean> => {
     streams?: Array<{ disposition?: { attached_pic?: number } }>;
   };
 
-  return (
-    data.streams?.some((stream) => stream.disposition?.attached_pic === 1) ?? false
-  );
+  return data.streams?.some((stream) => stream.disposition?.attached_pic === 1) ?? false;
 };
 
 describe("splitMp3", () => {
@@ -193,6 +191,35 @@ describe("splitMp3", () => {
 
     const hasArt = await hasAttachedPicture(outputs[0]);
     expect(hasArt).toBe(true);
+  });
+
+  it("builds segment args that map audio only", () => {
+    const args = buildSegmentArgs({
+      inputPath: "input.mp3",
+      outputPattern: "out_%05d.mp3",
+      seconds: 30,
+      tags: { title: "Title", artist: "Artist" },
+    });
+
+    const mapIndex = args.findIndex((value) => value === "-map");
+    expect(mapIndex).toBeGreaterThanOrEqual(0);
+    expect(args[mapIndex + 1]).toBe("0:a");
+    expect(args.includes("0:v")).toBe(false);
+  });
+
+  it("builds slice args that map audio only", () => {
+    const args = buildSliceArgs({
+      inputPath: "input.mp3",
+      outputPath: "chunk.mp3",
+      start: 10,
+      duration: 5,
+      tags: { title: "Title", artist: "Artist" },
+    });
+
+    const mapIndex = args.findIndex((value) => value === "-map");
+    expect(mapIndex).toBeGreaterThanOrEqual(0);
+    expect(args[mapIndex + 1]).toBe("0:a");
+    expect(args.includes("0:v")).toBe(false);
   });
 
   it("throws when both by minutes and respect-silence are provided", async () => {
